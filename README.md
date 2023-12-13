@@ -1,6 +1,6 @@
 # snapshotter.js
 
-Get Cardano stake pool snapshot data at the end of the epoch using the goMaestro API and store it in a local SQLite database.
+Get Cardano stake pool snapshot data at the end of the epoch using the Koios API and store it in a local SQLite database.
 
 ## Prerequisites
 You need SQLite and Node.js installed on your system. For a Debian/Ubuntu-based system you can install those by running this command:
@@ -10,7 +10,7 @@ sudo apt install sqlite3 nodejs
 ```
 
 ## Installation
-Clone the repository and enter the `snapshotter` directory. Open the `snapshotter.js` file and set the `goMaestroApiKey` to your API key.
+Clone the repository and enter the `snapshotter` directory. Open the `snapshotter.js` file and set the `koiosApiKey` to your API key.
 
 To install the package dependencies, run:
 ```
@@ -60,4 +60,4 @@ Enable and start the timer:
 sudo systemctl enable --now snapshotter.timer
 ```
 
-Done.
+You can also run the program manually on any day of the epoch by using the `-f` argument. To save a snapshot for any other epoch than the current, use i.e. `-e 450`.

@@ -17,12 +17,11 @@ create table pool (
 create table snapshot (
     id integer not null primary key autoincrement,
     stake_address varchar(64) not null,
-    active_epoch_no INT not null,
-    snapshot_epoch_no INT not null,
+    epoch_no INT not null,
     amount DOUBLE PRECISION NULL,
     delegated_to INT not null,
     created_at datetime not null default CURRENT_TIMESTAMP,
-    unique(stake_address, snapshot_epoch_no, delegated_to) on conflict replace
+    unique(stake_address, epoch_no, delegated_to) on conflict replace
 );
 
 --

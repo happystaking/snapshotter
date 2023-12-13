@@ -1,29 +1,39 @@
 /**
- * Get Cardano stake pool snapshot data at the end of the epoch using the
- * goMaestro API and store it in a local SQLite database.
+ * Store Cardano stake pool snapshot data from Koios into a local SQLite database.
  */
 import sqlite3 from 'sqlite3';
 import axios from 'axios';
 import rateLimit from 'axios-rate-limit';
+import { program } from 'commander';
 
 sqlite3.verbose();
 
-const goMaestroApiKey = '';
-const goMaestroBaseUrl = 'https://mainnet.gomaestro-api.org/v1';
+const koiosApiKey = '';
+const koiosBaseUrl = 'https://api.koios.rest/api/v1';
 const axiosRL = rateLimit(axios.create(), { maxRPS: 8 })
 let currentEpoch = null;
-let goMaestroConfig = {
+let koiosConfig = {
     method: 'get',
     maxBodyLength: Infinity,
     keepAlive: true,
     headers: {
-        'Accept': 'application/json',
-        'api-key': goMaestroApiKey
+        'accept': 'application/json',
+        'authorization': 'Bearer ' + koiosApiKey
     }
 };
 
+// Parse commandline arguments
+program.name('snapshotter.js')
+    .description('Store Cardano stake pool snapshot data from Koios into a local SQLite database.')
+    .usage('[OPTIONS]...')
+    .option('-e, --epoch <number>', 'the epoch number to save a snapshot of')
+    .option('-f, --force', 'disregard the constraint to run on last epoch day')
+    .version('0.1.0', '-v, --version')
+    .parse(process.argv);
+const options = program.opts();
+
 // Exit if today is not the last day of the epoch.
-if ((Math.floor((((new Date() - new Date("2017-09-23 23:44:51 +0000")) / 1000) / 86400)) % 5) != 4) {
+if (((Math.floor((((new Date() - new Date("2017-09-23 23:44:51 +0000")) / 1000) / 86400)) % 5) != 4) && !options.force) {
     console.log('Today is not the last day of a Cardano epoch.'); process.exit();
 }
 
@@ -34,34 +44,36 @@ const db = new sqlite3.Database('./snapshotter.sqlite', sqlite3.OPEN_READWRITE, 
     }
 });
 
-// Get the current epoch number using the API.
-goMaestroConfig.url = goMaestroBaseUrl + '/epochs/current';
-(async () => {
-    await axiosRL(goMaestroConfig).then(function (response) {
-        currentEpoch = response.data.data.epoch_no;
+// Set the current epoch number
+if (options.epoch !== '') {
+    currentEpoch = options.epoch;
+} else {
+    koiosConfig.url = koiosBaseUrl + '/tip';
+    await axiosRL(koiosConfig).then(function (response) {
+        currentEpoch = response.data[0].epoch_no;
     }).catch(function (err) {
         console.error(err.message); process.exit(1);
     });
-})()
+}
 
 // Select all pools from db, use API to query their delegations and
 // insert API results in the SQLite snapshot table.
 db.all(`select * from pool`, [], (err, rows) => {
     if (err) { throw err; }
     rows.forEach((row) => {
-        goMaestroConfig.url = goMaestroBaseUrl + '/pools/' + row.bech32 + '/delegators';
+        koiosConfig.url = koiosBaseUrl + '/pool_delegators_history?_pool_bech32=' + row.bech32 + '&_epoch_no=' + currentEpoch;
         getPoolDelegations(row);
     });
 });
 
 // Helper function to get API results.
 const getPoolDelegations = (row) => {
-    const r = axiosRL(goMaestroConfig).then(response => {
-        let d = response.data;
-        insertPoolDelegations(row.id, d.data);
-        console.log('Pool ID ' + row.id.toString().padStart(2, ' ') + '; Rows: ' + d.data.length.toString().padStart(3, ' ') + '; Next: ' + d.next_cursor);
-        if (d.next_cursor !== null) {
-            goMaestroConfig.url = goMaestroBaseUrl + '/pools/' + row.bech32 + '/delegators?cursor=' + d.next_cursor;
+    const r = axiosRL(koiosConfig).then(response => {
+        let contentRange = response.headers['content-range'].substring(0, response.headers['content-range'].indexOf('/')).split('-');
+        insertPoolDelegations(row.id, response.data);
+        console.log('Pool: ' + row.ticker.toString().padEnd(5, ' ') + '   Range: ' + contentRange[0].padStart(5, ' ') + ' - ' + contentRange[1].padStart(5, ' '));
+        if (contentRange[1].slice(-3) == '999') {
+            koiosConfig.url = koiosBaseUrl + '/pool_delegators_history?_pool_bech32=' + row.bech32 + '&_epoch_no=' + currentEpoch + '&offset=' + (parseInt(contentRange[1], 10) + 1);
             getPoolDelegations(row);
         }
     }).catch(err => console.error(err.message));
@@ -73,15 +85,13 @@ const insertPoolDelegations = (id, delegations) => {
         db.run(`
             insert into snapshot (
                 stake_address,
-                active_epoch_no,
-                snapshot_epoch_no,
+                epoch_no,
                 amount,
                 delegated_to,
                 created_at)
-            values (?, ?, ?, ?, ?, ?)`, [
+            values (?, ?, ?, ?, ?)`, [
                 delegation.stake_address,
-                delegation.active_epoch_no,
-                currentEpoch,
+                delegation.epoch_no,
                 delegation.amount,
                 id,
                 Date.now()
